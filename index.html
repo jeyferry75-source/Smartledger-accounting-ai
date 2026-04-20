@@ -1,0 +1,594 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+
+const FONT_LINK =
+  "https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap";
+
+const TRANSACTIONS = [
+  { id: 1,  name: "Figma Pro",       category: "Software",       amount: -15,   date: "Apr 18", time: "2:41 PM",  logo: "F", color: "#A259FF" },
+  { id: 2,  name: "Stripe Payout",   category: "Revenue",        amount: +1240, date: "Apr 17", time: "11:02 AM", logo: "S", color: "#00D4AA" },
+  { id: 3,  name: "AWS EC2",         category: "Infrastructure",  amount: -38.5, date: "Apr 16", time: "9:17 AM",  logo: "A", color: "#FF9900" },
+  { id: 4,  name: "Client Invoice",  category: "Revenue",        amount: +3500, date: "Apr 15", time: "4:55 PM",  logo: "C", color: "#ADFF2F" },
+  { id: 5,  name: "Notion Team",     category: "Software",       amount: -16,   date: "Apr 14", time: "8:00 AM",  logo: "N", color: "#ffffff" },
+  { id: 6,  name: "GitHub Copilot",  category: "Software",       amount: -10,   date: "Apr 13", time: "8:00 AM",  logo: "G", color: "#6e40c9" },
+  { id: 7,  name: "Coffee",          category: "Meals",           amount: -6.5,  date: "Apr 12", time: "7:30 AM",  logo: "M", color: "#c8956c" },
+  { id: 8,  name: "Vercel Pro",      category: "Infrastructure",  amount: -20,   date: "Apr 11", time: "12:00 PM", logo: "V", color: "#ffffff" },
+  { id: 9,  name: "Freelance Fee",   category: "Revenue",        amount: +850,  date: "Apr 10", time: "3:20 PM",  logo: "F", color: "#00D4AA" },
+  { id: 10, name: "Adobe CC",        category: "Software",       amount: -55,   date: "Apr 9",  time: "8:00 AM",  logo: "A", color: "#FF0000" },
+  { id: 11, name: "Domain Renewal",  category: "Infrastructure",  amount: -14,   date: "Apr 8",  time: "10:05 AM", logo: "D", color: "#ADFF2F" },
+  { id: 12, name: "Consulting Call", category: "Revenue",        amount: +200,  date: "Apr 7",  time: "2:00 PM",  logo: "C", color: "#A259FF" },
+];
+
+const SPEND_CHART = [
+  { month: "Nov", value: 420 },
+  { month: "Dec", value: 680 },
+  { month: "Jan", value: 390 },
+  { month: "Feb", value: 510 },
+  { month: "Mar", value: 740 },
+  { month: "Apr", value: 315 },
+];
+
+const LINE_CHART = [
+  { x: 0, y: 200 }, { x: 1, y: 420 }, { x: 2, y: 310 },
+  { x: 3, y: 580 }, { x: 4, y: 440 }, { x: 5, y: 720 },
+  { x: 6, y: 530 }, { x: 7, y: 890 }, { x: 8, y: 670 },
+  { x: 9, y: 950 }, { x: 10, y: 740 }, { x: 11, y: 1100 },
+];
+
+const CMD_RESPONSES = {
+  "analyse my spending last month": { title: "Spending Analysis · March", body: "You spent $740 in March — up 45% from February. Your biggest category was Infrastructure (+$210). I found 3 recurring subscriptions you haven't used in 30 days. Want me to flag them?", tag: "AI Insight" },
+  "upload invoice": { title: "Invoice Upload Ready", body: "Drop your PDF or image here and I'll parse vendor name, amount, due date, and auto-categorise it. I'll also match it against open purchase orders.", tag: "Action" },
+  "upload this invoice": { title: "Invoice Upload Ready", body: "Drop your PDF or image here and I'll parse vendor name, amount, due date, and auto-categorise it. I'll also match it against open purchase orders.", tag: "Action" },
+  "show runway": { title: "Runway Estimate", body: "At your current burn rate of $612/mo, your $8,400 balance gives you ~13.7 months of runway. Revenue covers 78% of expenses. You're trending toward profitability in Q3.", tag: "Forecast" },
+  "what's my tax liability": { title: "Tax Liability · 2024", body: "Estimated self-employment tax: $2,140. Deductible expenses identified: $1,890 (software, home office, equipment). Net taxable income: ~$18,600. Set aside $4,650 to be safe.", tag: "Tax" },
+};
+
+const CMD_SUGGESTIONS = ["Analyse my spending last month", "Upload this invoice", "Show runway", "What's my tax liability"];
+
+const fmt = (n) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Math.abs(n));
+
+// ── Neon SVG Area Chart ───────────────────────────────────────────────────────
+function NeonLineChart({ data, color = "#ADFF2F" }) {
+  const W = 340, H = 88;
+  const pad = { l: 4, r: 4, t: 12, b: 4 };
+  const maxY = Math.max(...data.map(d => d.y));
+  const minY = Math.min(...data.map(d => d.y));
+  const range = maxY - minY || 1;
+  const pts = data.map(d => ({
+    px: pad.l + (d.x / (data.length - 1)) * (W - pad.l - pad.r),
+    py: pad.t + (1 - (d.y - minY) / range) * (H - pad.t - pad.b),
+  }));
+  const pathD = pts.map((p, i) => {
+    if (i === 0) return `M ${p.px} ${p.py}`;
+    const prev = pts[i - 1];
+    const cpx = (prev.px + p.px) / 2;
+    return `C ${cpx} ${prev.py}, ${cpx} ${p.py}, ${p.px} ${p.py}`;
+  }).join(" ");
+  const areaD = pathD + ` L ${pts[pts.length-1].px} ${H} L ${pts[0].px} ${H} Z`;
+  const uid = color.replace("#","");
+  return (
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible" }}>
+      <defs>
+        <linearGradient id={`ag-${uid}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.4"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+        <filter id={`glow-${uid}`}>
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <path d={areaD} fill={`url(#ag-${uid})`}/>
+      <path d={pathD} fill="none" stroke={color} strokeWidth={5} opacity={0.18} filter={`url(#glow-${uid})`}/>
+      <path d={pathD} fill="none" stroke={color} strokeWidth={1.8} opacity={0.9}/>
+      <path d={pathD} fill="none" stroke="#fff" strokeWidth={0.6} opacity={0.25}/>
+      <circle cx={pts[pts.length-1].px} cy={pts[pts.length-1].py} r={5} fill={color} opacity={0.35} filter={`url(#glow-${uid})`}/>
+      <circle cx={pts[pts.length-1].px} cy={pts[pts.length-1].py} r={3} fill={color}/>
+      <circle cx={pts[pts.length-1].px} cy={pts[pts.length-1].py} r={1.2} fill="#fff"/>
+    </svg>
+  );
+}
+
+// ── Neon Bar Spark ────────────────────────────────────────────────────────────
+function NeonSparkBar({ data }) {
+  const max = Math.max(...data.map(d => d.value));
+  return (
+    <div style={{ display:"flex", alignItems:"flex-end", gap:6, height:82 }}>
+      {data.map((d, i) => {
+        const isLast = i === data.length - 1;
+        const h = Math.round((d.value / max) * 66);
+        return (
+          <div key={d.month} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:5 }}>
+            <div style={{ position:"relative", width:"100%", height:`${h}px` }}>
+              <div style={{ position:"absolute", inset:0, borderRadius:4, background: isLast ? "#ADFF2F" : "rgba(173,255,47,0.4)", filter: isLast ? "blur(5px)" : "blur(2px)", opacity: isLast ? 0.65 : 0.25, transform:"scaleX(1.5)" }}/>
+              <div style={{ position:"absolute", inset:0, borderRadius:4,
+                background: isLast ? "linear-gradient(180deg,#EEFF80,#ADFF2F)" : "linear-gradient(180deg,rgba(173,255,47,0.55),rgba(173,255,47,0.2))",
+                boxShadow: isLast ? "0 0 14px #ADFF2F99, 0 0 5px #ADFF2F" : undefined,
+              }}/>
+            </div>
+            <span style={{ fontSize:9, color: isLast ? "#ADFF2F" : "rgba(255,255,255,0.22)", fontFamily:"'DM Mono',monospace", textShadow: isLast ? "0 0 8px rgba(173,255,47,0.7)" : "none" }}>
+              {d.month}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Neon Ring ─────────────────────────────────────────────────────────────────
+function NeonRing({ pct, label, sub, color = "#ADFF2F" }) {
+  const r = 31, circ = 2 * Math.PI * r, dash = (pct / 100) * circ;
+  const uid = `nr-${label.replace(/\s/g,"")}`;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:5 }}>
+      <svg width={76} height={76} viewBox="0 0 76 76" style={{ overflow:"visible" }}>
+        <defs>
+          <filter id={uid}>
+            <feGaussianBlur stdDeviation="3.5" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+        </defs>
+        <circle cx={38} cy={38} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={5}/>
+        <circle cx={38} cy={38} r={r} fill="none" stroke={color} strokeWidth={9}
+          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+          transform="rotate(-90 38 38)" opacity={0.22} filter={`url(#${uid})`}
+          style={{ transition:"stroke-dasharray 1.2s cubic-bezier(.22,1,.36,1)" }}/>
+        <circle cx={38} cy={38} r={r} fill="none" stroke={color} strokeWidth={3.5}
+          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+          transform="rotate(-90 38 38)"
+          style={{ transition:"stroke-dasharray 1.2s cubic-bezier(.22,1,.36,1)" }}/>
+        <text x={38} y={43} textAnchor="middle" fill="#fff" fontSize={13} fontFamily="'Syne',sans-serif" fontWeight={800}>{pct}%</text>
+      </svg>
+      <span style={{ fontSize:11, color:"rgba(255,255,255,0.45)", fontFamily:"'Syne',sans-serif" }}>{label}</span>
+      <span style={{ fontSize:9, color:"rgba(255,255,255,0.22)", fontFamily:"'DM Mono',monospace" }}>{sub}</span>
+    </div>
+  );
+}
+
+// ── Transaction Drawer ────────────────────────────────────────────────────────
+function TransactionDrawer({ onClose }) {
+  const [filter, setFilter] = useState("All");
+  const categories = ["All","Revenue","Software","Infrastructure","Meals"];
+  const filtered = filter === "All" ? TRANSACTIONS : TRANSACTIONS.filter(t => t.category === filter);
+  const inTotal  = filtered.filter(t=>t.amount>0).reduce((a,t)=>a+t.amount,0);
+  const outTotal = filtered.filter(t=>t.amount<0).reduce((a,t)=>a+Math.abs(t.amount),0);
+  const net      = filtered.reduce((a,t)=>a+t.amount,0);
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, zIndex:200, background:"rgba(0,0,0,0.6)", backdropFilter:"blur(10px)", animation:"fadeIn 0.2s ease" }}>
+      <div onClick={e=>e.stopPropagation()} style={{
+        position:"absolute", right:0, top:0, bottom:0, width:"min(480px,92vw)",
+        background:"rgba(10,10,18,0.98)",
+        borderLeft:"1px solid rgba(173,255,47,0.15)",
+        display:"flex", flexDirection:"column",
+        animation:"slideFromRight 0.32s cubic-bezier(.22,1,.36,1)",
+        boxShadow:"-32px 0 80px rgba(0,0,0,0.7), -1px 0 0 rgba(173,255,47,0.08)",
+      }}>
+
+        {/* Header */}
+        <div style={{ padding:"22px 22px 14px", borderBottom:"1px solid rgba(255,255,255,0.05)", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div>
+            <div style={{ fontSize:18, fontWeight:800, letterSpacing:-0.5 }}>All Transactions</div>
+            <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", marginTop:3, letterSpacing:1 }}>
+              {TRANSACTIONS.length} ENTRIES · APR 2026
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.06)", border:"none", color:"rgba(255,255,255,0.45)", width:30, height:30, borderRadius:8, cursor:"pointer", fontSize:15, display:"flex", alignItems:"center", justifyContent:"center", transition:"background 0.15s" }}
+            onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.12)"}
+            onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.06)"}
+          >✕</button>
+        </div>
+
+        {/* Filter pills */}
+        <div style={{ padding:"11px 18px", display:"flex", gap:6, overflowX:"auto", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+          {categories.map(cat => (
+            <button key={cat} onClick={()=>setFilter(cat)} style={{
+              padding:"5px 13px", borderRadius:20, border:"none", whiteSpace:"nowrap",
+              background: filter===cat ? "#ADFF2F" : "rgba(255,255,255,0.06)",
+              color: filter===cat ? "#0a0a0f" : "rgba(255,255,255,0.4)",
+              fontSize:11, fontFamily:"'Syne',sans-serif", fontWeight:700, cursor:"pointer",
+              boxShadow: filter===cat ? "0 0 16px rgba(173,255,47,0.4)" : "none",
+              transition:"all 0.15s",
+            }}>{cat}</button>
+          ))}
+        </div>
+
+        {/* Summary */}
+        <div style={{ padding:"13px 22px", display:"flex", gap:28, borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+          {[
+            { label:"IN",  val: inTotal,  color:"#ADFF2F" },
+            { label:"OUT", val: outTotal, color:"#ff6b6b" },
+            { label:"NET", val: net,      color:"#00D4AA" },
+          ].map(s => (
+            <div key={s.label}>
+              <div style={{ fontSize:9, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:1.5, marginBottom:3 }}>{s.label}</div>
+              <div style={{ fontSize:15, fontWeight:800, color:s.color, fontFamily:"'DM Mono',monospace", letterSpacing:-0.5, textShadow:`0 0 12px ${s.color}55` }}>
+                {s.val >= 0 ? "+" : "−"}{fmt(s.val)}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* List */}
+        <div style={{ flex:1, overflowY:"auto", padding:"10px 14px 28px" }}>
+          {filtered.map((t, i) => (
+            <div key={t.id} style={{
+              display:"flex", alignItems:"center", gap:12,
+              padding:"11px 10px", borderRadius:12, marginBottom:3,
+              background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.04)",
+              cursor:"pointer", transition:"all 0.15s",
+              animation:`slideItemIn 0.28s cubic-bezier(.22,1,.36,1) ${i*0.035}s both`,
+            }}
+              onMouseEnter={e=>{ e.currentTarget.style.background="rgba(255,255,255,0.05)"; e.currentTarget.style.borderColor="rgba(173,255,47,0.1)"; }}
+              onMouseLeave={e=>{ e.currentTarget.style.background="rgba(255,255,255,0.02)"; e.currentTarget.style.borderColor="rgba(255,255,255,0.04)"; }}
+            >
+              <div style={{ width:38, height:38, borderRadius:11, flexShrink:0, background:`${t.color}18`, border:`1px solid ${t.color}35`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, fontWeight:700, color:t.color, boxShadow:`0 0 10px ${t.color}22` }}>
+                {t.logo}
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.name}</div>
+                <div style={{ fontSize:10, color:"rgba(255,255,255,0.25)", fontFamily:"'DM Mono',monospace", marginTop:2 }}>
+                  {t.category} · {t.date} · {t.time}
+                </div>
+              </div>
+              <div style={{ textAlign:"right" }}>
+                <div style={{ fontSize:13, fontWeight:700, fontFamily:"'DM Mono',monospace", color: t.amount>0 ? "#ADFF2F" : "rgba(255,255,255,0.6)", textShadow: t.amount>0 ? "0 0 12px rgba(173,255,47,0.5)" : "none" }}>
+                  {t.amount>0?"+":"−"}{fmt(t.amount)}
+                </div>
+                <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", color: t.amount>0?"rgba(173,255,47,0.45)":"rgba(255,255,255,0.18)", letterSpacing:0.5, marginTop:1 }}>
+                  {t.category.toUpperCase()}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Command Bar ───────────────────────────────────────────────────────────────
+function CommandBar({ onClose }) {
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+  useEffect(()=>{ inputRef.current?.focus(); },[]);
+  const handleKeyDown = e => { if(e.key==="Escape") onClose(); if(e.key==="Enter"&&query.trim()) runQuery(); };
+  const runQuery = useCallback(async (q=query) => {
+    setLoading(true); setResult(null);
+    await new Promise(r=>setTimeout(r,900));
+    const key = q.toLowerCase().trim();
+    const match = Object.keys(CMD_RESPONSES).find(k=>key.includes(k)||k.includes(key.split(" ")[0]));
+    setResult(match ? CMD_RESPONSES[match] : { title:"Processing Query", body:`I've logged your request: "${q}". Your AI accountant is reviewing it and will surface insights shortly.`, tag:"Queued" });
+    setLoading(false);
+  }, [query]);
+
+  return (
+    <div onClick={onClose} style={{ position:"fixed", inset:0, zIndex:999, background:"rgba(0,0,0,0.72)", backdropFilter:"blur(12px)", display:"flex", alignItems:"flex-start", justifyContent:"center", paddingTop:110, animation:"fadeIn 0.15s ease" }}>
+      <div onClick={e=>e.stopPropagation()} style={{ width:"min(640px,92vw)", background:"rgba(12,12,20,0.97)", border:"1px solid rgba(173,255,47,0.25)", borderRadius:16, overflow:"hidden", boxShadow:"0 32px 80px rgba(0,0,0,0.65), 0 0 40px rgba(173,255,47,0.06), inset 0 1px 0 rgba(255,255,255,0.05)", animation:"slideUp 0.2s cubic-bezier(.22,1,.36,1)" }}>
+        <div style={{ display:"flex", alignItems:"center", padding:"14px 18px", borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
+          <span style={{ fontSize:16, marginRight:12, opacity:0.4 }}>⌘</span>
+          <input ref={inputRef} value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={handleKeyDown}
+            placeholder="Ask anything — 'Analyse spending', 'Upload invoice'..."
+            style={{ flex:1, background:"none", border:"none", outline:"none", color:"#fff", fontSize:15, fontFamily:"'Syne',sans-serif", caretColor:"#ADFF2F" }}/>
+          {loading && <div style={{ width:18, height:18, border:"2px solid rgba(173,255,47,0.3)", borderTopColor:"#ADFF2F", borderRadius:"50%", animation:"spin 0.7s linear infinite" }}/>}
+          {!loading && query && <button onClick={()=>runQuery()} style={{ background:"#ADFF2F", color:"#0a0a0f", border:"none", borderRadius:8, padding:"4px 12px", fontSize:12, fontFamily:"'Syne',sans-serif", fontWeight:700, cursor:"pointer" }}>Run ↵</button>}
+        </div>
+        {!result && !loading && (
+          <div style={{ padding:"10px 8px" }}>
+            {CMD_SUGGESTIONS.map(s=>(
+              <div key={s} onClick={()=>{setQuery(s);runQuery(s);}}
+                style={{ padding:"9px 12px", borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:10, color:"rgba(255,255,255,0.55)", fontSize:13, fontFamily:"'Syne',sans-serif", transition:"background 0.15s" }}
+                onMouseEnter={e=>e.currentTarget.style.background="rgba(173,255,47,0.08)"}
+                onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+              ><span style={{fontSize:14}}>✦</span>{s}</div>
+            ))}
+          </div>
+        )}
+        {loading && <div style={{ padding:"28px 18px", textAlign:"center", color:"rgba(255,255,255,0.28)", fontSize:13, fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>AI ACCOUNTANT THINKING...</div>}
+        {result && (
+          <div style={{ padding:18, animation:"fadeIn 0.3s ease" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+              <span style={{ color:"#ADFF2F", fontSize:13, fontFamily:"'Syne',sans-serif", fontWeight:700 }}>{result.title}</span>
+              <span style={{ background:"rgba(173,255,47,0.1)", color:"#ADFF2F", fontSize:10, padding:"3px 8px", borderRadius:4, fontFamily:"'DM Mono',monospace", letterSpacing:1 }}>{result.tag}</span>
+            </div>
+            <p style={{ color:"rgba(255,255,255,0.62)", fontSize:14, fontFamily:"'Syne',sans-serif", lineHeight:1.65, margin:0 }}>{result.body}</p>
+            <div style={{ marginTop:14, display:"flex", gap:8 }}>
+              <button style={{ background:"#ADFF2F", color:"#0a0a0f", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, fontFamily:"'Syne',sans-serif", fontWeight:700, cursor:"pointer" }}>Take Action</button>
+              <button onClick={()=>{setResult(null);setQuery("");inputRef.current?.focus();}} style={{ background:"rgba(255,255,255,0.06)", color:"rgba(255,255,255,0.5)", border:"none", borderRadius:8, padding:"7px 14px", fontSize:12, fontFamily:"'Syne',sans-serif", cursor:"pointer" }}>Ask more</button>
+            </div>
+          </div>
+        )}
+        <div style={{ padding:"8px 18px", borderTop:"1px solid rgba(255,255,255,0.04)", display:"flex", gap:16 }}>
+          {["↵ Run","⎋ Close","↑↓ Navigate"].map(t=><span key={t} style={{ fontSize:10, color:"rgba(255,255,255,0.18)", fontFamily:"'DM Mono',monospace" }}>{t}</span>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main Dashboard ────────────────────────────────────────────────────────────
+export default function Group10Finance() {
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeNav, setActiveNav] = useState("Overview");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet"; link.href = FONT_LINK;
+    document.head.appendChild(link);
+    setTimeout(() => setMounted(true), 80);
+    const handler = e => { if((e.metaKey||e.ctrlKey)&&e.key==="k"){ e.preventDefault(); setCmdOpen(true); } };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const glass = { background:"rgba(255,255,255,0.025)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:16, backdropFilter:"blur(20px)" };
+  const navItems = ["Overview","Transactions","Invoices","Tax","Reports"];
+
+  return (
+    <>
+      <style>{`
+        @keyframes fadeIn       { from{opacity:0}            to{opacity:1} }
+        @keyframes slideUp      { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes slideInLeft  { from{opacity:0;transform:translateX(-22px)} to{opacity:1;transform:translateX(0)} }
+        @keyframes slideFromRight{ from{opacity:0;transform:translateX(100%)} to{opacity:1;transform:translateX(0)} }
+        @keyframes slideItemIn  { from{opacity:0;transform:translateX(22px)} to{opacity:1;transform:translateX(0)} }
+        @keyframes spin         { to{transform:rotate(360deg)} }
+        @keyframes pulse        { 0%,100%{opacity:.4} 50%{opacity:1} }
+        @keyframes neonBlink    { 0%,89%,100%{opacity:1} 90%,94%{opacity:.6} 92%{opacity:1} }
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{background:#070710 !important}
+        ::-webkit-scrollbar{width:3px}
+        ::-webkit-scrollbar-track{background:transparent}
+        ::-webkit-scrollbar-thumb{background:rgba(173,255,47,0.2);border-radius:2px}
+      `}</style>
+
+      <div style={{ minHeight:"100vh", background:"linear-gradient(150deg,#070710 0%,#09091a 50%,#070d07 100%)", fontFamily:"'Syne',sans-serif", color:"#fff", position:"relative", overflow:"hidden" }}>
+
+        {/* Ambient glows */}
+        <div style={{ position:"fixed", top:-180, left:-80, width:700, height:700, background:"radial-gradient(circle,rgba(173,255,47,0.055) 0%,transparent 65%)", pointerEvents:"none", zIndex:0 }}/>
+        <div style={{ position:"fixed", bottom:-280, right:-120, width:800, height:800, background:"radial-gradient(circle,rgba(0,212,170,0.04) 0%,transparent 65%)", pointerEvents:"none", zIndex:0 }}/>
+
+        {/* Dot grid */}
+        <div style={{ position:"fixed", inset:0, zIndex:0, backgroundImage:"radial-gradient(rgba(255,255,255,0.032) 1px,transparent 1px)", backgroundSize:"28px 28px", pointerEvents:"none" }}/>
+
+        {/* ── Sidebar ── */}
+        <aside style={{ position:"fixed", left:0, top:0, bottom:0, width:218, background:"rgba(7,7,16,0.88)", borderRight:"1px solid rgba(255,255,255,0.05)", backdropFilter:"blur(24px)", zIndex:100, display:"flex", flexDirection:"column", padding:"22px 13px", animation: mounted ? "slideInLeft 0.45s cubic-bezier(.22,1,.36,1)" : "none" }}>
+
+          {/* Logo */}
+          <div style={{ marginBottom:34, paddingLeft:4 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ width:34, height:34, borderRadius:10, background:"linear-gradient(135deg,#ADFF2F,#00D4AA)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, fontWeight:800, color:"#070710", boxShadow:"0 0 22px rgba(173,255,47,0.45),0 0 8px rgba(173,255,47,0.2)", animation:"neonBlink 7s ease infinite" }}>G</div>
+              <div>
+                <div style={{ fontSize:13, fontWeight:800, letterSpacing:-0.3, lineHeight:1.1 }}>Group 10</div>
+                <div style={{ fontSize:10, color:"#ADFF2F", fontFamily:"'DM Mono',monospace", letterSpacing:1.5, opacity:0.7 }}>FINANCE</div>
+              </div>
+            </div>
+          </div>
+
+          <nav style={{ flex:1 }}>
+            {navItems.map(item => (
+              <div key={item} onClick={()=>setActiveNav(item)} style={{ padding:"10px 11px", borderRadius:10, marginBottom:2, cursor:"pointer", display:"flex", alignItems:"center", gap:10, background: activeNav===item ? "rgba(173,255,47,0.1)" : "transparent", color: activeNav===item ? "#ADFF2F" : "rgba(255,255,255,0.38)", fontSize:13, fontWeight: activeNav===item ? 700 : 500, borderLeft: activeNav===item ? "2px solid #ADFF2F" : "2px solid transparent", boxShadow: activeNav===item ? "inset 0 0 24px rgba(173,255,47,0.04)" : "none", transition:"all 0.15s" }}>
+                <span style={{ fontSize:13 }}>{["◈","≡","⊡","◎","⊞"][navItems.indexOf(item)]}</span>{item}
+              </div>
+            ))}
+          </nav>
+
+          <button onClick={()=>setCmdOpen(true)} style={{ width:"100%", padding:"10px 11px", borderRadius:10, background:"rgba(173,255,47,0.05)", border:"1px solid rgba(173,255,47,0.14)", color:"rgba(255,255,255,0.38)", fontSize:12, fontFamily:"'DM Mono',monospace", cursor:"pointer", display:"flex", justifyContent:"space-between", transition:"all 0.15s" }}
+            onMouseEnter={e=>e.currentTarget.style.background="rgba(173,255,47,0.1)"}
+            onMouseLeave={e=>e.currentTarget.style.background="rgba(173,255,47,0.05)"}
+          >
+            <span>⌘K Ask AI</span>
+            <span style={{ background:"rgba(255,255,255,0.07)", borderRadius:4, padding:"1px 5px" }}>⌘K</span>
+          </button>
+
+          <div style={{ marginTop:11, padding:"10px 11px", borderRadius:10, background:"rgba(255,255,255,0.03)", display:"flex", alignItems:"center", gap:10 }}>
+            <div style={{ width:28, height:28, borderRadius:8, background:"linear-gradient(135deg,#ADFF2F,#00D4AA)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:9, fontWeight:800, color:"#070710", flexShrink:0 }}>JJ</div>
+            <div>
+              <div style={{ fontSize:12, fontWeight:600 }}>Jeffery Jordan</div>
+              <div style={{ fontSize:10, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace" }}>Pro · Student</div>
+            </div>
+          </div>
+        </aside>
+
+        {/* ── Main Content ── */}
+        <main style={{ marginLeft:218, padding:"26px 26px 32px", position:"relative", zIndex:1, opacity: mounted ? 1 : 0, transition:"opacity 0.5s ease" }}>
+
+          {/* Top bar */}
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:26 }}>
+            <div>
+              <div style={{ fontSize:21, fontWeight:800, letterSpacing:-0.5 }}>Good morning, Jeffery ✦</div>
+              <div style={{ color:"rgba(255,255,255,0.28)", fontSize:12, marginTop:2, fontFamily:"'DM Mono',monospace" }}>APR 20, 2026 · FISCAL Q2</div>
+            </div>
+            <div style={{ display:"flex", gap:9, alignItems:"center" }}>
+              <div style={{ padding:"4px 10px", borderRadius:20, background:"rgba(173,255,47,0.09)", border:"1px solid rgba(173,255,47,0.18)", fontSize:11, color:"#ADFF2F", fontFamily:"'DM Mono',monospace", letterSpacing:1, animation:"pulse 2.2s ease infinite" }}>● AI ACTIVE</div>
+              <button onClick={()=>setDrawerOpen(true)} style={{ padding:"8px 15px", borderRadius:10, background:"rgba(255,255,255,0.05)", color:"rgba(255,255,255,0.6)", border:"1px solid rgba(255,255,255,0.09)", fontSize:13, fontWeight:700, cursor:"pointer", transition:"all 0.15s" }}
+                onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,0.09)"}
+                onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,0.05)"}
+              >All Transactions →</button>
+              <button onClick={()=>setCmdOpen(true)} style={{ padding:"8px 16px", borderRadius:10, background:"#ADFF2F", color:"#070710", border:"none", fontSize:13, fontWeight:800, cursor:"pointer", boxShadow:"0 0 24px rgba(173,255,47,0.28)", transition:"transform 0.15s,box-shadow 0.15s" }}
+                onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 0 38px rgba(173,255,47,0.5)";}}
+                onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 0 24px rgba(173,255,47,0.28)";}}
+              >⌘ Ask AI</button>
+            </div>
+          </div>
+
+          {/* Bento Grid */}
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12 }}>
+
+            {/* Balance — neon area chart */}
+            <div style={{ ...glass, gridColumn:"span 2", padding:24, position:"relative", overflow:"hidden" }}>
+              <div style={{ position:"absolute", top:-60, right:-60, width:220, height:220, background:"radial-gradient(circle,rgba(173,255,47,0.07),transparent 70%)", pointerEvents:"none" }}/>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:2, marginBottom:6 }}>TOTAL BALANCE</div>
+              <div style={{ fontSize:42, fontWeight:800, letterSpacing:-2, marginBottom:4 }}>
+                $8,<span style={{ color:"#ADFF2F", textShadow:"0 0 24px rgba(173,255,47,0.65)" }}>420</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:14 }}>
+                <span style={{ background:"rgba(173,255,47,0.12)", color:"#ADFF2F", fontSize:11, padding:"3px 8px", borderRadius:6, fontFamily:"'DM Mono',monospace", boxShadow:"0 0 10px rgba(173,255,47,0.2)" }}>+12.4%</span>
+                <span style={{ color:"rgba(255,255,255,0.28)", fontSize:12 }}>vs last month</span>
+              </div>
+              <NeonLineChart data={LINE_CHART} color="#ADFF2F"/>
+            </div>
+
+            {/* MRR */}
+            <div style={{ ...glass, padding:22, position:"relative", overflow:"hidden" }}>
+              <div style={{ position:"absolute", top:-30, right:-30, width:120, height:120, background:"radial-gradient(circle,rgba(0,212,170,0.1),transparent 70%)", pointerEvents:"none" }}/>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:2, marginBottom:6 }}>MONTHLY REVENUE</div>
+              <div style={{ fontSize:30, fontWeight:800, letterSpacing:-1, color:"#00D4AA", textShadow:"0 0 20px rgba(0,212,170,0.55)" }}>$4,740</div>
+              <div style={{ color:"rgba(255,255,255,0.28)", fontSize:12, marginTop:4 }}>3 active clients</div>
+              <div style={{ marginTop:14, height:4, background:"rgba(255,255,255,0.06)", borderRadius:2 }}>
+                <div style={{ width:"78%", height:"100%", background:"linear-gradient(90deg,#ADFF2F,#00D4AA)", borderRadius:2, boxShadow:"0 0 10px rgba(0,212,170,0.55)" }}/>
+              </div>
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:5 }}>
+                <span style={{ fontSize:10, color:"rgba(255,255,255,0.22)", fontFamily:"'DM Mono',monospace" }}>78% of goal</span>
+                <span style={{ fontSize:10, color:"rgba(255,255,255,0.22)", fontFamily:"'DM Mono',monospace" }}>$6k target</span>
+              </div>
+            </div>
+
+            {/* Burn */}
+            <div style={{ ...glass, padding:22, position:"relative", overflow:"hidden" }}>
+              <div style={{ position:"absolute", top:-30, right:-30, width:120, height:120, background:"radial-gradient(circle,rgba(255,107,107,0.08),transparent 70%)", pointerEvents:"none" }}/>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:2, marginBottom:6 }}>MONTHLY BURN</div>
+              <div style={{ fontSize:30, fontWeight:800, letterSpacing:-1, color:"#ff6b6b", textShadow:"0 0 20px rgba(255,107,107,0.55)" }}>$612</div>
+              <div style={{ color:"rgba(255,255,255,0.28)", fontSize:12, marginTop:4 }}>↓ 8% from March</div>
+              <div style={{ marginTop:12, display:"flex", gap:4, alignItems:"flex-end", height:38 }}>
+                {[65,45,55,35,80,42,58].map((h,i) => (
+                  <div key={i} style={{ flex:1, height:`${h*0.44}px`, position:"relative" }}>
+                    <div style={{ position:"absolute", inset:0, background:"rgba(255,107,107,0.18)", borderRadius:2, filter:"blur(2px)" }}/>
+                    <div style={{ position:"relative", height:"100%", background:"rgba(255,107,107,0.42)", borderRadius:2, boxShadow: i===4?"0 0 8px rgba(255,107,107,0.55)":undefined }}/>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Transactions list — 2 col 2 row */}
+            <div style={{ ...glass, gridColumn:"span 2", gridRow:"span 2", padding:22, display:"flex", flexDirection:"column" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+                <div>
+                  <div style={{ fontSize:15, fontWeight:700 }}>Recent Transactions</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace" }}>{TRANSACTIONS.length} this month</div>
+                </div>
+                <button onClick={()=>setDrawerOpen(true)} style={{ fontSize:11, color:"#ADFF2F", background:"rgba(173,255,47,0.08)", border:"1px solid rgba(173,255,47,0.15)", borderRadius:8, padding:"5px 10px", cursor:"pointer", fontFamily:"'Syne',sans-serif", boxShadow:"0 0 10px rgba(173,255,47,0.1)", transition:"all 0.15s" }}
+                  onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 18px rgba(173,255,47,0.3)"}
+                  onMouseLeave={e=>e.currentTarget.style.boxShadow="0 0 10px rgba(173,255,47,0.1)"}
+                >View all →</button>
+              </div>
+              <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:5 }}>
+                {TRANSACTIONS.slice(0,7).map((t,i) => (
+                  <div key={t.id} onClick={()=>setDrawerOpen(true)} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 11px", borderRadius:10, background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.04)", cursor:"pointer", transition:"all 0.15s", animation:`fadeIn 0.3s ease ${i*0.05}s both` }}
+                    onMouseEnter={e=>{e.currentTarget.style.background="rgba(255,255,255,0.05)";e.currentTarget.style.borderColor="rgba(173,255,47,0.1)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,0.02)";e.currentTarget.style.borderColor="rgba(255,255,255,0.04)";}}
+                  >
+                    <div style={{ width:34, height:34, borderRadius:10, background:`${t.color}18`, border:`1px solid ${t.color}30`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:700, color:t.color, flexShrink:0, boxShadow:`0 0 8px ${t.color}22` }}>{t.logo}</div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{t.name}</div>
+                      <div style={{ fontSize:10, color:"rgba(255,255,255,0.25)", fontFamily:"'DM Mono',monospace" }}>{t.category} · {t.date}</div>
+                    </div>
+                    <div style={{ fontSize:13, fontWeight:700, fontFamily:"'DM Mono',monospace", color: t.amount>0?"#ADFF2F":"rgba(255,255,255,0.6)", textShadow: t.amount>0?"0 0 10px rgba(173,255,47,0.45)":"none" }}>
+                      {t.amount>0?"+":"−"}{fmt(t.amount)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Health rings */}
+            <div style={{ ...glass, padding:22 }}>
+              <div style={{ fontSize:13, fontWeight:700, marginBottom:16 }}>Financial Health</div>
+              <div style={{ display:"flex", justifyContent:"space-around" }}>
+                <NeonRing pct={78} label="Revenue" sub="vs goal" color="#ADFF2F"/>
+                <NeonRing pct={62} label="Margin" sub="net" color="#00D4AA"/>
+              </div>
+            </div>
+
+            {/* Runway */}
+            <div style={{ ...glass, padding:22, position:"relative", overflow:"hidden" }}>
+              <div style={{ position:"absolute", inset:0, background:"linear-gradient(135deg,rgba(173,255,47,0.04),transparent)", pointerEvents:"none" }}/>
+              <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:2, marginBottom:8 }}>RUNWAY</div>
+              <div style={{ fontSize:36, fontWeight:800, letterSpacing:-1 }}>13<span style={{ fontSize:18, color:"rgba(255,255,255,0.35)" }}>.7 mo</span></div>
+              <div style={{ color:"rgba(255,255,255,0.28)", fontSize:12, marginTop:4 }}>At $612/mo burn rate</div>
+              <div style={{ marginTop:14, display:"inline-flex", alignItems:"center", gap:6, background:"rgba(173,255,47,0.08)", border:"1px solid rgba(173,255,47,0.18)", borderRadius:8, padding:"5px 10px", fontSize:11, color:"#ADFF2F", fontFamily:"'DM Mono',monospace", boxShadow:"0 0 12px rgba(173,255,47,0.12)" }}>
+                ↑ Profitable in Q3
+              </div>
+            </div>
+
+            {/* Neon Spend bars — 2 col */}
+            <div style={{ ...glass, gridColumn:"span 2", padding:22 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700 }}>Monthly Spend</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace" }}>6-month history</div>
+                </div>
+                <span style={{ background:"rgba(173,255,47,0.08)", color:"#ADFF2F", fontSize:10, padding:"3px 8px", borderRadius:6, fontFamily:"'DM Mono',monospace", boxShadow:"0 0 8px rgba(173,255,47,0.18)" }}>APR LOWEST</span>
+              </div>
+              <NeonSparkBar data={SPEND_CHART}/>
+            </div>
+
+            {/* AI insight — 2 col */}
+            <div style={{ ...glass, gridColumn:"span 2", padding:"17px 20px", background:"rgba(173,255,47,0.03)", border:"1px solid rgba(173,255,47,0.11)", display:"flex", alignItems:"center", justifyContent:"space-between", boxShadow:"inset 0 0 40px rgba(173,255,47,0.015)" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:13 }}>
+                <div style={{ width:36, height:36, borderRadius:10, background:"rgba(173,255,47,0.1)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:17, boxShadow:"0 0 16px rgba(173,255,47,0.22)", flexShrink:0 }}>✦</div>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, color:"#ADFF2F" }}>AI Accountant Insight</div>
+                  <div style={{ fontSize:13, color:"rgba(255,255,255,0.48)", marginTop:2 }}>3 unused subscriptions totalling $41/mo — cancel to extend runway by 0.8 months.</div>
+                </div>
+              </div>
+              <button onClick={()=>setCmdOpen(true)} style={{ flexShrink:0, background:"#ADFF2F", color:"#070710", border:"none", borderRadius:10, padding:"9px 17px", fontSize:12, fontWeight:800, cursor:"pointer", fontFamily:"'Syne',sans-serif", whiteSpace:"nowrap", boxShadow:"0 0 20px rgba(173,255,47,0.32)", transition:"box-shadow 0.15s" }}
+                onMouseEnter={e=>e.currentTarget.style.boxShadow="0 0 32px rgba(173,255,47,0.55)"}
+                onMouseLeave={e=>e.currentTarget.style.boxShadow="0 0 20px rgba(173,255,47,0.32)"}
+              >Review with AI →</button>
+            </div>
+
+            {/* Tax forecast */}
+            <div style={{ ...glass, gridColumn:"span 2", padding:22 }}>
+              <div style={{ fontSize:13, fontWeight:700, marginBottom:14 }}>Tax Forecast · 2025</div>
+              <div style={{ display:"flex", gap:16 }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:10, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:1, marginBottom:5 }}>ESTIMATED LIABILITY</div>
+                  <div style={{ fontSize:24, fontWeight:800, letterSpacing:-1, color:"#ff9f43", textShadow:"0 0 16px rgba(255,159,67,0.45)" }}>$2,140</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", marginTop:4 }}>Set aside $4,650</div>
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:10, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace", letterSpacing:1, marginBottom:5 }}>DEDUCTIONS FOUND</div>
+                  <div style={{ fontSize:24, fontWeight:800, letterSpacing:-1, color:"#ADFF2F", textShadow:"0 0 16px rgba(173,255,47,0.55)" }}>$1,890</div>
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,0.28)", marginTop:4 }}>Software, HO, gear</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Invoices */}
+            <div style={{ ...glass, gridColumn:"span 2", padding:22 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                <div style={{ fontSize:13, fontWeight:700 }}>Pending Invoices</div>
+                <span style={{ background:"rgba(255,107,107,0.09)", color:"#ff6b6b", fontSize:10, padding:"3px 8px", borderRadius:6, fontFamily:"'DM Mono',monospace", boxShadow:"0 0 8px rgba(255,107,107,0.18)" }}>2 OVERDUE</span>
+              </div>
+              {[
+                { client:"Acme Corp",   amount:2400, due:"Apr 22", status:"overdue" },
+                { client:"StartupXYZ", amount:800,  due:"Apr 28", status:"pending" },
+                { client:"DevCo LLC",  amount:1200, due:"May 5",  status:"pending" },
+              ].map(inv => (
+                <div key={inv.client} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600 }}>{inv.client}</div>
+                    <div style={{ fontSize:10, color:"rgba(255,255,255,0.28)", fontFamily:"'DM Mono',monospace" }}>Due {inv.due}</div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ fontSize:13, fontWeight:700, fontFamily:"'DM Mono',monospace" }}>{fmt(inv.amount)}</div>
+                    <div style={{ fontSize:9, fontFamily:"'DM Mono',monospace", letterSpacing:1, color: inv.status==="overdue"?"#ff6b6b":"rgba(255,255,255,0.28)" }}>{inv.status.toUpperCase()}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+          </div>
+        </main>
+
+        {drawerOpen && <TransactionDrawer onClose={()=>setDrawerOpen(false)}/>}
+        {cmdOpen    && <CommandBar        onClose={()=>setCmdOpen(false)}/>}
+      </div>
+    </>
+  );
+}
